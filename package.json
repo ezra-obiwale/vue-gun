@@ -1,5 +1,5 @@
 {
-  "name": "vue-gundb",
+  "name": "@ezraobiwale/vue-gun",
   "version": "1.0.0",
   "description": "A vuejs implementation of gundb",
   "main": "src/index.js",
