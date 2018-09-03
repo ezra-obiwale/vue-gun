@@ -1,4 +1,5 @@
 import Gun from 'gun/gun'
+import SEA from 'gun/sea'
 export default {
     install: function (Vue, options) {
       Vue.prototype.$gun = Gun(options)
@@ -6,7 +7,7 @@ export default {
         addGunWatcher: function (keyPath, val, vm) {
           vm.$gun.get(vm.$options.$gunRootKey).path(keyPath)
             .not(function () {
-                this.put(typeof val == 'object' && val.constructor === Array ? this.arrToGunObj(val) : val)
+              this.put(Array.isArray(val) ? this.arrToGunObj(val) : val)
             })
             .on(function (gunVal, gunKey) {
               if (typeof gunVal == 'object') return; /* only do stuff on non objects */
@@ -65,7 +66,7 @@ export default {
         }
       }
       Vue.mixin({
-        data: function () {
+        data () {
           if (!this.$options.gunData) {
             return {}
           }
@@ -77,7 +78,7 @@ export default {
           }
           return dataObj;
         },
-        created: function () {
+        created () {
           if (this.$options.gunData) {
             $gunData.addWatchers(typeof this.$options.gunData == 'function' ? this.$options.gunData() : this.$options.gunData, '', this)
           }
