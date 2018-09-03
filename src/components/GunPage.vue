@@ -56,6 +56,7 @@ export default {
     return {
       currentItem: null,
       data: [],
+      publicScope: false,
       ready: false
     }
   },
@@ -66,14 +67,18 @@ export default {
         this.init()
       })
       .catch(() => {
-        let rootKey = window.location.hostname.replace(/\./g, '-')
-        this.gunRoot = this.$gun.get(rootKey)
+        this.gunRoot = this.$gun.get(this.rootKey)
         this.init()
       })
   },
   computed: {
-    collection() {
-      return this.gunRoot.get(this.collectionName)
+    collection () {
+      return this.publicScope
+        ? this.$gun.get(this.rootKey)
+        : this.gunRoot.get(this.collectionName)
+    },
+    rootKey () {
+      return window.location.hostname.replace(/\./g, '-')
     }
   },
   watch: {
@@ -97,23 +102,33 @@ export default {
         }
         key = this.currentItemKey
       }
-      this.save({
+      if (!this.softDelete) {
+        return new Promise((resolve, reject) => {
+          this.collection.get(key).put(null).once(() => {
+            this.publicScope = false
+            resolve(null)
+          })
+        })
+      }
+      return this.save({
         deletedAt: Date.now()
       }, key)
-      if (!this.softDelete) {
-        return this.collection.get(key).put(null).once(console.log)
-      }
     },
-    getItem (key, callback) {
-      if (!key) {
-        new Error(`No key specified`)
-      }
-      this.collection.get(key).on(data => {
-        if (!data || typeof data != 'object') {
-          return callback(data)
+    getItem (key) {
+      return new Promise((resolve, reject) => {
+        if (!key) {
+          this.publicScope = false
+          reject(new Error(`No key specified`))
         }
-        delete data._
-        callback(data.deletedAt && !this.withTrashed ? null : data)
+        this.collection.get(key).on(data => {
+          if (!data || typeof data != 'object') {
+            this.publicScope = false
+            return resolve(data)
+          }
+          delete data._
+          this.publicScope = false
+          resolve(data.deletedAt && !this.withTrashed ? null : data)
+        })
       })
     },
     init () {
@@ -121,7 +136,8 @@ export default {
       this.$set(this, 'currentItem', null)
       if (this.collectionName) {
         if (this.currentItemKey) {
-          this.getItem(this.currentItemKey, data => this.$set(this, 'currentItem', data))
+          this.getItem(this.currentItemKey)
+            .then(data => this.$set(this, 'currentItem', data))
         } else {
           this.collection.map()
             .on((val, key) => {
@@ -142,6 +158,11 @@ export default {
             })
         }
       }
+      return this
+    },
+    publicly () {
+      this.publicScope = true
+      return this
     },
     save (data, key) {
       if (!key) {
@@ -149,8 +170,10 @@ export default {
       }
       return new Promise((resolve, reject) => {
         if (typeof data !== 'object') {
+          this.publicScope = false
           return reject(new Error('Data to be saved must be an object'))
         } else if (data === null) {
+          this.publicScope = false
           return reject(new Error('Data cannot be null. Please use the delete method'))
         }
         if (this.updatedAt) {
@@ -168,10 +191,12 @@ export default {
           }
           res = this.collection.set(data)
         } else {
+          this.publicScope = false
           reject(new Error('No data provided'))
         }
         res.once((data, key) => {
           data.$key = key
+          this.publicScope = false
           resolve(data)
         })
       })
