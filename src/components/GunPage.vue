@@ -12,6 +12,12 @@ export default {
       type: String,
       required: true
     },
+    collectionRefs: {
+      type: Array,
+      default: function () {
+        return []
+      }
+    },
     createdAt: {
       type: Boolean,
       default: true
@@ -73,9 +79,11 @@ export default {
   },
   computed: {
     collection () {
-      return this.publicScope
+      let collection = this.publicScope
         ? this.$gun.get(this.rootKey)
         : this.gunRoot.get(this.collectionName)
+      this.publicScope = false
+      return collection      
     },
     rootKey () {
       return window.location.hostname.replace(/\./g, '-')
@@ -104,9 +112,10 @@ export default {
       }
       if (!this.softDelete) {
         return new Promise((resolve, reject) => {
-          this.collection.get(key).put(null).once(() => {
-            this.publicScope = false
-            resolve(null)
+          let ref = this.collection.get(key)
+          ref.put(null).once(() => {
+            data.$ref = ref
+            resolve(data)
           })
         })
       }
@@ -114,89 +123,140 @@ export default {
         deletedAt: Date.now()
       }, key)
     },
-    getItem (key) {
+    getItem (key, withRefs = [], $rootRef) {
       return new Promise((resolve, reject) => {
         if (!key) {
-          this.publicScope = false
-          reject(new Error(`No key specified`))
+          return reject(new Error(`No key specified`))
         }
-        this.collection.get(key).on(data => {
-          if (!data || typeof data != 'object') {
-            this.publicScope = false
-            return resolve(data)
-          }
-          delete data._
-          this.publicScope = false
-          resolve(data.deletedAt && !this.withTrashed ? null : data)
+        if (!$rootRef) {
+          $rootRef = this.collection
+        }
+        let ref = $rootRef.get(key)
+        ref.not((a,b,c) => {
+          resolve(null)
         })
-      })
+          .on((data, key) => {
+            if (!data || typeof data != 'object') {
+              return resolve(data)
+            }
+            data.$key = key
+            data.$ref = ref
+            delete data._
+            if (withRefs.length) {
+              this.loadRefs(withRefs, data)
+                .then(data => {
+                  resolve(data.deletedAt && !this.withTrashed ? null : data)
+                })
+              return
+            }
+            resolve(data.deletedAt && !this.withTrashed ? null : data)
+          }, true)
+        })
     },
     init () {
       this.$set(this, 'data', [])
       this.$set(this, 'currentItem', null)
       if (this.collectionName) {
         if (this.currentItemKey) {
-          this.getItem(this.currentItemKey)
+          this.getItem(this.currentItemKey, this.collectionRefs)
             .then(data => this.$set(this, 'currentItem', data))
         } else {
+          const finish = (data, key) => {
+            let index = this.data.findIndex(obj => obj.$key == key)
+            // value exists already
+            if (index > -1) {
+              // value has been deleted
+              if (!data || (data.deletedAt && !this.withTrashed)) {
+                // remove from data
+                this.data.splice(index, 1)
+              } else {
+                // replace old with new
+                this.data.splice(index, 1, data)
+              }
+            } else if (!data.deletedAt || this.withTrashed) {
+              // append to data
+              this.data.push(data)
+            }
+          }
           this.collection.map()
             .on((val, key) => {
-              let index = this.data.findIndex(data => data.$key == key)
               if (val && typeof val == 'object') {
-                delete val._
                 val.$key = key
-              }
-              if (index > -1) {
-                if (!val || (val.deletedAt && !this.withTrashed)) {
-                  this.data.splice(index, 1)
+                val.$ref = this.collection.get(key)
+                delete val._
+                if (this.collectionRefs.length) {
+                  this.loadRefs(this.collectionRefs, val)
+                    .then(data => finish(data, key))
                 } else {
-                  this.data.splice(index, 1, val)
+                  finish(val, key)
                 }
-              } else if (val && typeof val == 'object' && (!val.deletedAt || this.withTrashed)) {
-                this.data.push(val)
               }
             })
         }
       }
       return this
     },
+    loadRefs(refs, data) {
+      if (!Array.isArray(refs) || !refs.length) {
+        return Promise.reject(new Error('No refs given'))
+      } else if (!data) {
+        return Promise.reject(new Error('No data given'))
+      } else if (!data.$ref) {
+        return Promise.reject(new Error('Invalid data given'))
+      }
+      return new Promise(resolve => {
+        let resolved = 0
+        refs.forEach(ref => {
+          let parts = ref.split('.'),
+            firstKey = parts.shift()
+          return this.getItem(firstKey, parts.length ? [parts.join('.')] : [], data.$ref)
+            .then(res => {
+              data[`$${ref}`] = res
+              resolved++
+              if (resolved == refs.length) {
+                resolve(data)
+              }
+            })
+        })
+      })
+    },
     publicly () {
       this.publicScope = true
       return this
     },
-    save (data, key) {
+    save (data, key, $rootRef) {
       if (!key) {
         key = this.currentItemKey
       }
       return new Promise((resolve, reject) => {
         if (typeof data !== 'object') {
-          this.publicScope = false
           return reject(new Error('Data to be saved must be an object'))
         } else if (data === null) {
-          this.publicScope = false
           return reject(new Error('Data cannot be null. Please use the delete method'))
+        }
+        if (!$rootRef) {
+          $rootRef = this.collection
         }
         if (this.updatedAt) {
           data.updatedAt = Date.now()
         }
-        // data = { ...data }
+        data = { ...data }
         delete data.$key
 
-        let res
+        let ref
         if (key) {
-          res = this.$gun.get(key).put(data)
+          ref = $rootRef.get(key).put(data)
         } else if (data) {
           if (this.createdAt) {
             data.createdAt = Date.now()
           }
-          res = this.collection.set(data)
+          ref = this.collection.set(data)
         } else {
-          this.publicScope = false
           reject(new Error('No data provided'))
         }
-        res.once((data, key) => {
+        ref.once((data, key) => {
           data.$key = key
-          this.publicScope = false
+          data.$ref = ref
           resolve(data)
         })
       })
