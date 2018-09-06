@@ -25,21 +25,9 @@ export default {
     currentItemKey: {
       type: String
     },
-    filter: {
-      type: Function,
-      default: function () {
-        return collection => collection
-      }
-    },
-    pagination: {
-      type: [Object, Boolean],
-      default: function () {
-        return {
-          append: true,
-          page: 1,
-          rowsPerPage: 15
-        }
-      }
+    public: {
+      type: Boolean,
+      default: false
     },
     searchQuery: {
       type: String,
@@ -77,31 +65,6 @@ export default {
         this.init()
       })
   },
-  computed: {
-    collection () {
-      let collection = this.publicScope
-        ? this.$gun.get(this.rootKey)
-        : this.gunRoot.get(this.collectionName)
-      this.publicScope = false
-      return collection      
-    },
-    rootKey () {
-      return window.location.hostname.replace(/\./g, '-')
-    }
-  },
-  watch: {
-    collectionName () {
-      this.$emit('resetPagination', {
-        append: true,
-        page: 1,
-        rowsPerPage: 15
-      })
-      this.init()
-    },
-    currentItemKey () {
-      this.init()
-    }
-  },
   methods: {
     delete (key) {
       if (!key) {
@@ -111,12 +74,11 @@ export default {
         key = this.currentItemKey
       }
       if (!this.softDelete) {
-        return new Promise((resolve, reject) => {
-          let ref = this.collection.get(key)
-          ref.put(null).once(() => {
-            data.$ref = ref
-            resolve(data)
-          })
+        return new Promise(resolve => {
+          this.collection.get(key)
+            .put(null).once(_ => {
+              resolve()
+            })
         })
       }
       return this.save({
@@ -260,6 +222,32 @@ export default {
           resolve(data)
         })
       })
+    }
+  },
+  computed: {
+    collection () {
+      let collection = this.publicScope || this.public
+        ? this.$gun.get(this.rootKey)
+        : this.gunRoot.get(this.collectionName)
+      this.publicScope = false
+      return collection
+    },
+    rootKey () {
+      return window.location.hostname.replace(/\./g, '-')
+    }
+  },
+  watch: {
+    collectionName () {
+      this.init()
+    },
+    currentItem (item) {
+      this.$emit('currentItemUpdated', item)
+    },
+    currentItemKey () {
+      this.init()
+    },
+    data (data) {
+      this.$emit('dataUpdated', data)
     }
   }
 }
