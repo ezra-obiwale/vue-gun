@@ -5,6 +5,8 @@
 </template>
 
 <script>
+import Gun from 'gun/gun'
+
 export default {
   name: 'GunPage',
   props: {
@@ -82,7 +84,7 @@ export default {
         })
       }
       return this.save({
-        deletedAt: Date.now()
+        deletedAt: Gun.time.is()
       }, key)
     },
     getItem (key, withRefs = [], $rootRef) {
@@ -200,7 +202,7 @@ export default {
           $rootRef = this.collection
         }
         if (this.updatedAt) {
-          data.updatedAt = Date.now()
+          data.updatedAt = Gun.time.is()
         }
         data = { ...data }
         delete data.$key
@@ -210,7 +212,7 @@ export default {
           ref = $rootRef.get(key).put(data)
         } else if (data) {
           if (this.createdAt) {
-            data.createdAt = Date.now()
+            data.createdAt = Gun.time.is()
           }
           ref = this.collection.set(data)
         } else {
