@@ -5,8 +5,7 @@
 </template>
 
 <script>
-import Gun from 'gun/gun'
-
+const uuidv4 = require('uuid/v4')
 export default {
   name: 'GunPage',
   props: {
@@ -24,7 +23,7 @@ export default {
       type: Boolean,
       default: true
     },
-    currentItemKey: {
+    currentItemId: {
       type: String
     },
     public: {
@@ -68,42 +67,41 @@ export default {
       })
   },
   methods: {
-    delete (key) {
-      if (!key) {
-        if (!this.currentItemKey) {
-          return Promise.reject(new Error('No key specified'))
+    delete (id) {
+      if (!id) {
+        if (!this.currentItemId) {
+          return Promise.reject(new Error('No id specified'))
         }
-        key = this.currentItemKey
+        id = this.currentItemId
       }
       if (!this.softDelete) {
         return new Promise(resolve => {
-          this.collection.get(key)
+          this.collection.get(id)
             .put(null).once(_ => {
-              resolve()
+              resolve(null)
             })
         })
       }
       return this.save({
-        deletedAt: Gun.time.is()
-      }, key)
+        deletedAt: Date.now()
+      }, id)
     },
-    getItem (key, withRefs = [], $rootRef) {
+    getItem (id, withRefs = [], $rootRef) {
       return new Promise((resolve, reject) => {
-        if (!key) {
-          return reject(new Error(`No key specified`))
+        if (!id) {
+          return reject(new Error(`No id specified`))
         }
         if (!$rootRef) {
           $rootRef = this.collection
         }
-        let ref = $rootRef.get(key)
+        let ref = $rootRef.get(id)
         ref.not((a,b,c) => {
           resolve(null)
         })
-          .on((data, key) => {
+          .on(data => {
             if (!data || typeof data != 'object') {
               return resolve(data)
             }
-            data.$key = key
             data.$ref = ref
             delete data._
             if (withRefs.length) {
@@ -121,12 +119,12 @@ export default {
       this.$set(this, 'data', [])
       this.$set(this, 'currentItem', null)
       if (this.collectionName) {
-        if (this.currentItemKey) {
-          this.getItem(this.currentItemKey, this.collectionRefs)
+        if (this.currentItemId) {
+          this.getItem(this.currentItemId, this.collectionRefs)
             .then(data => this.$set(this, 'currentItem', data))
         } else {
-          const finish = (data, key) => {
-            let index = this.data.findIndex(obj => obj.$key == key)
+          const finish = (data, id) => {
+            let index = this.data.findIndex(obj => obj.$id == id)
             // value exists already
             if (index > -1) {
               // value has been deleted
@@ -137,23 +135,25 @@ export default {
                 // replace old with new
                 this.data.splice(index, 1, data)
               }
-            } else if (!data.deletedAt || this.withTrashed) {
+            } else if (data && !data.deletedAt || this.withTrashed) {
               // append to data
               this.data.push(data)
             }
           }
           this.collection.map()
-            .on((val, key) => {
+            .on((val, id) => {
               if (val && typeof val == 'object') {
-                val.$key = key
-                val.$ref = this.collection.get(key)
+                val.$ref = this.collection.get(id)
+                val.isforCurrentUser = () => this.deepValue(this.$user, 'is.pub') == val.$owner
                 delete val._
                 if (this.collectionRefs.length) {
                   this.loadRefs(this.collectionRefs, val)
-                    .then(data => finish(data, key))
+                    .then(data => finish(data, id))
                 } else {
-                  finish(val, key)
+                  finish(val, id)
                 }
+              } else if (val === null) {
+                finish(val, id)
               }
             })
         }
@@ -188,39 +188,43 @@ export default {
       this.publicScope = true
       return this
     },
-    save (data, key, $rootRef) {
-      if (!key) {
-        key = this.currentItemKey
-      }
+    save (data, id, $rootRef) {
       return new Promise((resolve, reject) => {
         if (typeof data !== 'object') {
           return reject(new Error('Data to be saved must be an object'))
         } else if (data === null) {
           return reject(new Error('Data cannot be null. Please use the delete method'))
         }
+        if (!id) {
+          id = this.currentItemId
+        }
         if (!$rootRef) {
           $rootRef = this.collection
         }
         if (this.updatedAt) {
-          data.updatedAt = Gun.time.is()
+          data.updatedAt = Date.now()
         }
         data = { ...data }
-        delete data.$key
 
         let ref
-        if (key) {
-          ref = $rootRef.get(key).put(data)
+        if (id) {
+          ref = $rootRef.get(id).put(data)
         } else if (data) {
           if (this.createdAt) {
-            data.createdAt = Gun.time.is()
+            data.createdAt = Date.now()
           }
-          ref = this.collection.set(data)
+          data.$id = uuidv4()
+          if (this.$user.is) {
+            data.$owner = this.deepValue(this.$user, 'is.pub')
+          }
+          ref = this.$gun.put(data)
+          this.collection.get(data.$id).put(ref)
         } else {
           reject(new Error('No data provided'))
         }
-        ref.once((data, key) => {
-          data.$key = key
+        ref.once(data => {
           data.$ref = ref
+          data.isforCurrentUser = () => this.deepValue(this.$user, 'is.pub') == data.$owner
           resolve(data)
         })
       })
@@ -229,7 +233,7 @@ export default {
   computed: {
     collection () {
       let collection = this.publicScope || this.public
-        ? this.$gun.get(this.rootKey)
+        ? this.$gun.get(this.rootKey).get(this.collectionName)
         : this.gunRoot.get(this.collectionName)
       this.publicScope = false
       return collection
@@ -242,14 +246,20 @@ export default {
     collectionName () {
       this.init()
     },
+    collectionRefs () {
+      this.init()
+    },
     currentItem (item) {
       this.$emit('currentItemUpdated', item)
     },
-    currentItemKey () {
+    currentItemId () {
       this.init()
     },
     data (data) {
       this.$emit('dataUpdated', data)
+    },
+    public () {
+      this.init()
     }
   }
 }
