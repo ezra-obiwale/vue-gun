@@ -7,8 +7,8 @@ async-limiter@~1.0.0:
   resolved "https://registry.yarnpkg.com/async-limiter/-/async-limiter-1.0.0.tgz#78faed8c3d074ab81f22b4e985d79e8738f720f8"
 
 gun@^0.9.9998:
-  version "0.9.99993"
-  resolved "https://registry.yarnpkg.com/gun/-/gun-0.9.99993.tgz#e72b4c0ef95cab0044394a728828ab3f12a0acfc"
+  version "0.9.99997"
+  resolved "https://registry.yarnpkg.com/gun/-/gun-0.9.99997.tgz#303f09e34ad57e2b65671841e2bcbf4791c3d0bc"
   dependencies:
     ws "~>5.2.0"
 

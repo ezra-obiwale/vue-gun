@@ -62,9 +62,44 @@ export default {
         this.init()
       })
       .catch(() => {
-        this.gunRoot = this.$gun.get(this.rootKey)
+        this.gunRoot = this.publicRoot
         this.init()
       })
+  },
+  computed: {
+    collection () {
+      let collection = this.publicScope || this.public
+        ? this.publicRoot.get(this.collectionName)
+        : this.gunRoot.get(this.collectionName)
+      this.publicScope = false
+      return collection
+    },
+    publicRoot () {
+      return this.$gun.get(this.rootKey)
+    },
+    rootKey () {
+      return window.location.hostname.replace(/\./g, '-')
+    }
+  },
+  watch: {
+    collectionName () {
+      this.init()
+    },
+    collectionRefs () {
+      this.init()
+    },
+    currentItem (item) {
+      this.$emit('currentItemUpdated', item)
+    },
+    currentItemId () {
+      this.init()
+    },
+    data (data) {
+      this.$emit('dataUpdated', data)
+    },
+    public () {
+      this.init()
+    }
   },
   methods: {
     delete (id) {
@@ -80,6 +115,7 @@ export default {
             .put(null).once(_ => {
               resolve(null)
             })
+          this.publicly().collection.get(id).put(null)
         })
       }
       return this.save({
@@ -92,7 +128,8 @@ export default {
           return reject(new Error(`No id specified`))
         }
         if (!$rootRef) {
-          $rootRef = this.collection
+          // $rootRef = this.collection
+          $rootRef = this.$gun
         }
         let ref = $rootRef.get(id)
         ref.not((a,b,c) => {
@@ -190,35 +227,45 @@ export default {
     },
     save (data, id, $rootRef) {
       return new Promise((resolve, reject) => {
-        if (typeof data !== 'object') {
-          return reject(new Error('Data to be saved must be an object'))
-        } else if (data === null) {
-          return reject(new Error('Data cannot be null. Please use the delete method'))
+        if (!this.currentItem) {
+          if (typeof data !== 'object') {
+            return reject(new Error('Data to be saved must be an object'))
+          } else if (data === null) {
+            return reject(new Error('Data cannot be null. Please use the delete method'))
+          }
         }
+        let ref
         if (!id) {
           id = this.currentItemId
         }
         if (!$rootRef) {
           $rootRef = this.collection
         }
-        if (this.updatedAt) {
-          data.updatedAt = Date.now()
-        }
-        data = { ...data }
+        if (data) {
+          if (this.updatedAt) {
+            data.updatedAt = Date.now()
+          }
+          data = { ...data }
 
-        let ref
-        if (id) {
-          ref = $rootRef.get(id).put(data)
-        } else if (data) {
-          if (this.createdAt) {
-            data.createdAt = Date.now()
+          delete data.$ref
+          delete data.isforCurrentUser
+
+          if (id) {
+            ref = $rootRef.get(id).put(data)
+          } else {
+            if (this.createdAt) {
+              data.createdAt = Date.now()
+            }
+            data.$id = uuidv4()
+            if (this.$user.is) {
+              data.$owner = this.deepValue(this.$user, 'is.pub')
+            }
+            ref = this.$gun.get(data.$id).put(data)
+            $rootRef.get(data.$id).put(ref)
           }
-          data.$id = uuidv4()
-          if (this.$user.is) {
-            data.$owner = this.deepValue(this.$user, 'is.pub')
-          }
-          ref = this.$gun.put(data)
-          this.collection.get(data.$id).put(ref)
+        } else if (id && id == this.currentItemId) {
+          ref = this.currentItem.$ref
+          $rootRef.get(id).put(ref)
         } else {
           reject(new Error('No data provided'))
         }
@@ -228,38 +275,6 @@ export default {
           resolve(data)
         })
       })
-    }
-  },
-  computed: {
-    collection () {
-      let collection = this.publicScope || this.public
-        ? this.$gun.get(this.rootKey).get(this.collectionName)
-        : this.gunRoot.get(this.collectionName)
-      this.publicScope = false
-      return collection
-    },
-    rootKey () {
-      return window.location.hostname.replace(/\./g, '-')
-    }
-  },
-  watch: {
-    collectionName () {
-      this.init()
-    },
-    collectionRefs () {
-      this.init()
-    },
-    currentItem (item) {
-      this.$emit('currentItemUpdated', item)
-    },
-    currentItemId () {
-      this.init()
-    },
-    data (data) {
-      this.$emit('dataUpdated', data)
-    },
-    public () {
-      this.init()
     }
   }
 }
