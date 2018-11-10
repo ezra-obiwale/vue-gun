@@ -1,6 +1,6 @@
 {
   "name": "@ezraobiwale/vue-gun",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "A vuejs implementation of gundb",
   "main": "src/index.js",
   "repository": "git@github.com:ezra-obiwale/vue-gundb.git",
