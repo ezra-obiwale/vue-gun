@@ -58,7 +58,7 @@ export default {
       collection: null,
       currentItem: null,
       data: [],
-      lastScope: true,
+      lastScope: false,
       publicScope: false,
       ready: false
     }
@@ -310,7 +310,7 @@ export default {
       })
     },
     scopedCollection() {
-      if (this.lastScope !== this.inPublic) {
+      if (this.lastScope !== this.inPublic || !this.collection) {
         this.lastScope = this.inPublic
         this.$set(
           this, 'collection',
