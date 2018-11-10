@@ -30,6 +30,12 @@ export default {
       type: Boolean,
       default: false
     },
+    rootKey: {
+      type: String,
+      default() {
+        return window.location.hostname.replace(/\./g, '-')
+      }
+    },
     searchQuery: {
       type: String,
       default: ''
@@ -49,36 +55,34 @@ export default {
   },
   data () {
     return {
+      collection: null,
       currentItem: null,
       data: [],
+      lastScope: true,
       publicScope: false,
       ready: false
     }
   },
   created () {
     this.$user.alive()
-      .then(() => {
+      .then(_ => {
         this.gunRoot = this.$user
         this.init()
       })
-      .catch(() => {
+      .catch(_ => {
         this.gunRoot = this.publicRoot
         this.init()
       })
   },
   computed: {
-    collection () {
-      let collection = this.publicScope || this.public
-        ? this.publicRoot.get(this.collectionName)
-        : this.gunRoot.get(this.collectionName)
-      this.publicScope = false
-      return collection
+    inPublic () {
+      return this.publicScope || this.public
+    },
+    publicCollection () {
+      return this.publicRoot.get(this.collectionName)
     },
     publicRoot () {
       return this.$gun.get(this.rootKey)
-    },
-    rootKey () {
-      return window.location.hostname.replace(/\./g, '-')
     }
   },
   watch: {
@@ -102,20 +106,40 @@ export default {
     }
   },
   methods: {
-    delete (id) {
+    _itemChanged (val, id, refs = []) {
+      return new Promise((resolve, reject) => {
+        if (val && typeof val == 'object') {
+          val.$ref = this.scopedCollection().get(id)
+          val.isforCurrentUser = () => this.deepValue(this.$user, 'is.pub') == val.$owner
+          delete val._
+          if (refs.length) {
+            this.loadRefs(this.refs, val)
+              .then(resolve)
+              .catch(reject)
+          } else {
+            resolve(val)
+          }
+        } else if (val === null) {
+          resolve(val)
+        } else {
+          reject()
+        }
+      })
+    },
+    delete (id, softly = false) {
       if (!id) {
         if (!this.currentItemId) {
           return Promise.reject(new Error('No id specified'))
         }
         id = this.currentItemId
       }
-      if (!this.softDelete) {
+      if (!softly && !this.softDelete) {
         return new Promise(resolve => {
-          this.collection.get(id)
+          this.scopedCollection().get(id)
             .put(null).once(_ => {
               resolve(null)
             })
-          this.publicly().collection.get(id).put(null)
+          this.publicly().scopedCollection().get(id).put(null)
         })
       }
       return this.save({
@@ -128,27 +152,21 @@ export default {
           return reject(new Error(`No id specified`))
         }
         if (!$rootRef) {
-          // $rootRef = this.collection
-          $rootRef = this.$gun
+          $rootRef = this.scopedCollection()
         }
         let ref = $rootRef.get(id)
-        ref.not((a,b,c) => {
+        ref.not(_ => {
           resolve(null)
         })
           .on(data => {
-            if (!data || typeof data != 'object') {
-              return resolve(data)
-            }
-            data.$ref = ref
-            delete data._
-            if (withRefs.length) {
-              this.loadRefs(withRefs, data)
-                .then(data => {
+            this._itemChanged(data, id, withRefs)
+              .then(data => {
+                if (!data || typeof data != 'object') {
+                  resolve(data)
+                } else {
                   resolve(data.deletedAt && !this.withTrashed ? null : data)
-                })
-              return
-            }
-            resolve(data.deletedAt && !this.withTrashed ? null : data)
+                }
+              })
           }, true)
         })
     },
@@ -160,38 +178,26 @@ export default {
           this.getItem(this.currentItemId, this.collectionRefs)
             .then(data => this.$set(this, 'currentItem', data))
         } else {
-          const finish = (data, id) => {
-            let index = this.data.findIndex(obj => obj.$id == id)
-            // value exists already
-            if (index > -1) {
-              // value has been deleted
-              if (!data || (data.deletedAt && !this.withTrashed)) {
-                // remove from data
-                this.data.splice(index, 1)
-              } else {
-                // replace old with new
-                this.data.splice(index, 1, data)
-              }
-            } else if (data && !data.deletedAt || this.withTrashed) {
-              // append to data
-              this.data.push(data)
-            }
-          }
-          this.collection.map()
+          this.scopedCollection().map()
             .on((val, id) => {
-              if (val && typeof val == 'object') {
-                val.$ref = this.collection.get(id)
-                val.isforCurrentUser = () => this.deepValue(this.$user, 'is.pub') == val.$owner
-                delete val._
-                if (this.collectionRefs.length) {
-                  this.loadRefs(this.collectionRefs, val)
-                    .then(data => finish(data, id))
-                } else {
-                  finish(val, id)
-                }
-              } else if (val === null) {
-                finish(val, id)
-              }
+              this._itemChanged(val, id, this.collectionRefs)
+                .then(item => {
+                  let index = this.data.findIndex(obj => obj.$id == id)
+                  // item exists already
+                  if (index > -1) {
+                    // item has been deleted
+                    if (!item || (item.deletedAt && !this.withTrashed)) {
+                      // remove from item
+                      this.data.splice(index, 1)
+                    } else {
+                      // replace old with new
+                      this.data.splice(index, 1, item)
+                    }
+                  } else if (item && !item.deletedAt || this.withTrashed) {
+                    // append to item
+                    this.data.push(item)
+                  }
+                })
             })
         }
       }
@@ -221,6 +227,31 @@ export default {
         })
       })
     },
+    privatize (id) {
+      id = id || this.currentItemId
+      if (!id) {
+        return Promise.reject(new Error('ID not specified'))
+      }
+      return this.getItem(id)
+        .then(item => {
+          this.save({ ...item, $isPublic: false }, id)
+          return this.publicly().delete(id)
+        })
+    },
+    publicize (id) {
+      id = id || this.currentItemId
+      if (!id) {
+        return Promise.reject(new Error('ID not specified'))
+      }
+      return this.getItem(id)
+        .then(item => {
+          return this.publicly().save(item, id)
+        })
+        .then(item => {
+          this.publicScope = false
+          return this.save({ ...item, $isPublic: true }, id)
+        })
+    },
     publicly () {
       this.publicScope = true
       return this
@@ -239,7 +270,7 @@ export default {
           id = this.currentItemId
         }
         if (!$rootRef) {
-          $rootRef = this.collection
+          $rootRef = this.scopedCollection()
         }
         if (data) {
           if (this.updatedAt) {
@@ -270,11 +301,37 @@ export default {
           reject(new Error('No data provided'))
         }
         ref.once(data => {
-          data.$ref = ref
-          data.isforCurrentUser = () => this.deepValue(this.$user, 'is.pub') == data.$owner
+          if (data) {
+            data.$ref = ref
+            data.isforCurrentUser = () => this.deepValue(this.$user, 'is.pub') == data.$owner
+          }
           resolve(data)
         })
       })
+    },
+    scopedCollection() {
+      if (this.lastScope !== this.inPublic) {
+        this.lastScope = this.inPublic
+        this.$set(
+          this, 'collection',
+          this.inPublic
+            ? this.publicRoot.get(this.collectionName)
+            : this.gunRoot.get(this.collectionName)
+        )
+        this.publicScope = false
+      }
+      return this.collection
+    },
+    togglePublicity (id) {
+      id = id || this.currentItemId
+      if (!id) {
+        return Promise.reject(new Error('ID not specified'))
+      }
+      this.publicly()
+      return this.publicly().getItem(id)
+        .then(item => {
+          return item ? this.privatize(id) : this.publicize(id)
+        })
     }
   }
 }
